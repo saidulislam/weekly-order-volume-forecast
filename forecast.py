@@ -6,49 +6,51 @@ import matplotlib.pyplot as plt
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-# Uncomment to predict real data
-# keep_parts = slice(1)
-#
-# epochs = 10000 # ctrl-c to stop early
-# lr = 0.001
-#
-# seq_len = 50
-# batch_size = 2
-#
-# # Increase hidden_dim depending on number of parts being trained
-# # since it encodes forecast for all parts
-# hidden_dim = 512
-# layers = 2
-#
-# # How far into the future to plot at the end
-# predict_steps = 24
-# predict_start = 0
-# predict_end = -predict_steps
-#
-# array = pd.read_csv("order-data.csv", skiprows=[0]).to_numpy()[keep_parts]
+# Choose subset of parts to train
+keep_parts = slice(10)
 
+epochs = 300 # ctrl-c to stop early
+lr = 0.001
 
-# Test Sin wave to make sure everything is working...
-epochs = 10000
-lr = .001
-seq_len = 150
-batch_size = 1
-hidden_dim = 128
+seq_len = 50
+batch_size = 2
+
+# Increase hidden_dim depending on number of parts being trained
+# since it encodes forecast for all parts
+hidden_dim = 512
 layers = 2
-predict_steps = 100
-predict_start = -seq_len
-predict_end = None
-array = np.array([[f'Wave {i}']+[np.sin(x + i*2*np.pi/2)*(i+1) for x in np.linspace(-1000, 1000, 10051)] for i in range(2)])
+
+# How many weeks to forecast
+predict_steps = 50
+# Forecast starts immediately after this slice of data
+predict_input = slice(-predict_steps//2)
+
+array = pd.read_csv("order-data.csv", skiprows=[0]).to_numpy()[keep_parts]
 
 
-parts = array.T[0]
+# Uncomment below to test predicting sin waves to make sure everything is working...
+# epochs = 10000
+# lr = .001
+# seq_len = 150
+# batch_size = 1
+# hidden_dim = 128
+# layers = 2
+# predict_steps = 100
+# predict_input = slice(-seq_len, None)
+# # Sequence needs to see at least a full wave length or results are bad
+# array = np.array([[f'Wave {i}']+[np.sin(x + i*2*np.pi/2)*(i+1) for x in np.linspace(-1000, 1000, 10051)] for i in range(2)])
+
+
+part_names = array.T[0]
 floats = np.array(array.T[1:], dtype='float32')
 
+# Normalize quantities to be between 0 - 1
 min_ = floats.min(0)
 max_ = floats.max(0)
-floats = (floats - min_) / (max_ - min_)
+normalize   = lambda values: (values - min_) / (max_ - min_)
+unnormalize = lambda normalized: normalized * (max_ - min_) + min_
 
-tensor = torch.from_numpy(floats)
+tensor = torch.from_numpy(normalize(floats))
 
 
 def batch_data(items, seq_len, batch_size):
@@ -120,11 +122,11 @@ except KeyboardInterrupt as e:
 
 
 print('predicting...')
-input = tensor[predict_start:predict_end]
-test = batch_data(input, len(input)-1, 1)
+input = tensor[predict_input]
+sequence = batch_data(input, len(input)-1, 1)
 model.eval()
 with torch.no_grad():
-    x, _ = test[0]
+    x, _ = sequence[0]
     y, hidden = model(x, None)
     y = y[-1:, :, :]
     predict = [y[0,0,:]]
@@ -132,14 +134,28 @@ with torch.no_grad():
         y, hidden = model(y, hidden)
         predict.append(y[0,0,:])
 
-import matplotlib.colors as mcolors
-colors = iter(mcolors.BASE_COLORS)
-for p in range(tensor.shape[1]):
-    color = next(colors)
-    actual = tensor[predict_start:,p]
-    plt.plot(range(len(actual)), actual, label=parts[p], color=color)
-    pred = [qty[p] for qty in predict]
-    plt.plot(range(len(x), len(x) + len(pred)), pred, color=color, linestyle='--')
+actual = tensor[predict_input.start:, :]
+actual = unnormalize(actual.numpy())
+predict = torch.stack(predict)
+predict = unnormalize(predict.numpy())
 
-plt.legend()
-plt.show()
+for p in range(actual.shape[1]):
+    plt.title(part_names[p])
+    act = actual[:, p]
+    plt.plot(range(len(act)), act)
+    pred = predict[:, p]
+    plt.plot(range(len(x), len(x) + len(pred)), pred, linestyle='--')
+    plt.show()
+
+# Show all curves on single chart
+# import matplotlib.colors as mcolors
+# colors = iter(mcolors.BASE_COLORS)
+# for p in range(tensor.shape[1]):
+#     color = next(colors)
+#     actual = tensor[predict_input.start:,p]
+#     plt.plot(range(len(actual)), actual, label=parts[p], color=color)
+#     pred = [qty[p] for qty in predict]
+#     plt.plot(range(len(x), len(x) + len(pred)), pred, color=color, linestyle='--')
+# 
+# plt.legend()
+# plt.show()
