@@ -9,7 +9,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # Choose subset of parts to train
 keep_parts = slice(10)
 
-epochs = 300 # ctrl-c to stop early
+epochs = 500 # ctrl-c to stop early
 lr = 0.001
 
 seq_len = 50
@@ -137,7 +137,7 @@ with torch.no_grad():
 actual = tensor[predict_input.start:, :]
 actual = unnormalize(actual.numpy())
 predict = torch.stack(predict)
-predict = unnormalize(predict.numpy())
+predict = unnormalize(predict.cpu().numpy())
 
 for p in range(actual.shape[1]):
     plt.title(part_names[p])
