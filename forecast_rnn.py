@@ -5,6 +5,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+rnn_type = nn.LSTM # or nn.GRU
 
 # Choose subset of parts to train
 keep_parts = slice(10)
@@ -69,15 +70,14 @@ train = valid = batch_data(tensor, seq_len, batch_size)
 
 
 class RNN(nn.Module):
-
-    def __init__(self, input_dim):
+    def __init__(self, input_dim, dropout=.3):
         super().__init__()
-        self.lstm = nn.LSTM(input_dim, hidden_dim, layers, dropout=.3)
+        self.rnn = rnn_type(input_dim, hidden_dim, layers, dropout=dropout)
         self.fc = nn.Linear(hidden_dim, input_dim)
-        self.dropout = nn.Dropout(.3)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, hidden):
-        y, hidden = self.lstm(x, hidden)
+        y, hidden = self.rnn(x, hidden)
         y = y.view(-1, hidden_dim)
         y = self.dropout(y)
         y = self.fc(y)
@@ -94,8 +94,12 @@ try:
         train_loss = 0
         hidden = None
         for x, target in train:
-            if hidden:
-                hidden = tuple(h.detach() for h in hidden)
+            if hidden is not None:
+                if isinstance(hidden, tuple):
+                    hidden = tuple(h.detach() for h in hidden) # LSTM
+                else:
+                    hidden = hidden.detach() # GRU
+
 
             y, hidden = model(x, hidden)
             loss = criterion(y, target)
@@ -123,28 +127,25 @@ except KeyboardInterrupt as e:
 
 print('predicting...')
 input = tensor[predict_input]
-sequence = batch_data(input, len(input)-1, 1)
+output = torch.zeros(predict_steps, input.shape[1])
 model.eval()
 with torch.no_grad():
-    x, _ = sequence[0]
+    x, _ = batch_data(input, len(input)-1, 1)[0]
     y, hidden = model(x, None)
     y = y[-1:, :, :]
-    predict = [y[0,0,:]]
-    for i in range(predict_steps):
+    output[0] = y[0, 0, :]
+    for i in range(1, predict_steps):
         y, hidden = model(y, hidden)
-        predict.append(y[0,0,:])
+        output[i] = y[0, 0, :]
 
-actual = tensor[predict_input.start:, :]
+actual = tensor[predict_input.start:][:len(input) + len(output)]
 actual = unnormalize(actual.numpy())
-predict = torch.stack(predict)
-predict = unnormalize(predict.cpu().numpy())
+predict = unnormalize(output.cpu().numpy())
 
 for p in range(actual.shape[1]):
     plt.title(part_names[p])
-    act = actual[:, p]
-    plt.plot(range(len(act)), act)
-    pred = predict[:, p]
-    plt.plot(range(len(x), len(x) + len(pred)), pred, linestyle='--')
+    plt.plot(range(len(actual)), actual[:, p])
+    plt.plot(range(len(x), len(x) + len(predict)), predict[:, p], linestyle='--')
     plt.show()
 
 # Show all curves on single chart
